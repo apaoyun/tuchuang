@@ -1,0 +1,1015 @@
+// ===================== 生肖映射 =====================
+const ZODIAC_MAP = {
+  '01':'马','02':'蛇','03':'龙','04':'兔',
+  '05':'虎','06':'牛','07':'鼠','08':'猪',
+  '09':'狗','10':'鸡','11':'猴','12':'羊',
+  '13':'马','14':'蛇','15':'龙','16':'兔',
+  '17':'虎','18':'牛','19':'鼠','20':'猪',
+  '21':'狗','22':'鸡','23':'猴','24':'羊',
+  '25':'马','26':'蛇','27':'龙','28':'兔',
+  '29':'虎','30':'牛','31':'鼠','32':'猪',
+  '33':'狗','34':'鸡','35':'猴','36':'羊',
+  '37':'马','38':'蛇','39':'龙','40':'兔',
+  '41':'虎','42':'牛','43':'鼠','44':'猪',
+  '45':'狗','46':'鸡','47':'猴','48':'羊',
+  '49':'马'
+};
+
+// ===================== 波色映射 =====================
+const COLOR_MAP = {
+  '01':'红','02':'红','07':'红','08':'红','12':'红','13':'红','18':'红','19':'红',
+  '23':'红','24':'红','29':'红','30':'红','34':'红','35':'红','40':'红','45':'红','46':'红',
+  '03':'蓝','04':'蓝','09':'蓝','10':'蓝','14':'蓝','15':'蓝','20':'蓝','25':'蓝','26':'蓝',
+  '31':'蓝','36':'蓝','37':'蓝','41':'蓝','42':'蓝','47':'蓝','48':'蓝',
+  '05':'绿','06':'绿','11':'绿','16':'绿','17':'绿','21':'绿','22':'绿','27':'绿','28':'绿',
+  '32':'绿','33':'绿','38':'绿','39':'绿','43':'绿','44':'绿','49':'绿'
+};
+const COLOR_CLASS = { '红':'red', '蓝':'blue', '绿':'green' };
+const COLOR_BG = { '红':'#e74c3c', '蓝':'#3498db', '绿':'#2ecc71' };
+
+const ZODIACS = ['鼠','牛','虎','兔','龙','蛇','马','羊','猴','鸡','狗','猪'];
+
+// ===================== CORS =====================
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+  'Pragma': 'no-cache',
+  'Expires': '0',
+};
+
+// ===================== 入口 =====================
+addEventListener('fetch', event => {
+  event.respondWith(handleRequest(event.request));
+});
+
+// ===================== 主路由 =====================
+async function handleRequest(request) {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: CORS_HEADERS });
+  }
+  const url = new URL(request.url);
+  const path = url.pathname;
+  if (path === '/api/login') {
+    return await routeLogin(request);
+  }
+  const isAuthorized = checkAuthorization(request, url);
+  if (!isAuthorized) {
+    return new Response(loginPageHtml(PASSWORD), {
+      headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS_HEADERS },
+    });
+  }
+  try {
+    const format = url.searchParams.get('format') || 'html';
+    if (path === '/api' || format === 'json') {
+      return await routeJson(request, url);
+    }
+    return await routeHtml(request, url);
+  } catch (error) {
+    const debug = url.searchParams.get('debug') === 'true';
+    if (debug) {
+      return new Response(JSON.stringify({
+        success: false,
+        error: error.message,
+        htmlSnippet: error.htmlSnippet || '无片段',
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    }
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  }
+}
+
+function checkAuthorization(request, url) {
+  const pwdParam = url.searchParams.get('password');
+  const cookie = request.headers.get('Cookie') || '';
+  const cookieMatch = cookie.match(/login_password=([^;]+)/);
+  const cookiePwd = cookieMatch ? cookieMatch[1] : null;
+  return pwdParam === PASSWORD || cookiePwd === PASSWORD;
+}
+
+async function routeLogin(request) {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ success: false, message: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  }
+  let password = '';
+  const contentType = request.headers.get('content-type') || '';
+  try {
+    if (contentType.includes('application/json')) {
+      const body = await request.json();
+      password = body.password || '';
+    } else {
+      const formData = await request.formData();
+      password = formData.get('password') || '';
+    }
+  } catch {}
+  if (password === PASSWORD) {
+    const cookieHeader = `login_password=${PASSWORD}; Max-Age=86400; path=/; SameSite=Lax`;
+    return new Response(JSON.stringify({ success: true, message: '登录成功' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Set-Cookie': cookieHeader, ...CORS_HEADERS },
+    });
+  } else {
+    return new Response(JSON.stringify({ success: false, message: '密码错误' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  }
+}
+
+async function routeHtml(request, url) {
+  const limit = parseInt(url.searchParams.get('limit')) || DEFAULT_LIMIT;
+  const topN = parseInt(url.searchParams.get('top')) || DEFAULT_TOP;
+  const debug = url.searchParams.get('debug') === 'true';
+  const { recentData, totalPeriods, topDetails, coldNumbers, onceNumbers, dateRange, fullStats, comboRank, zodiacTrios } =
+    await fetchAndAnalyze(SOURCE_URL, limit, topN, debug);
+  const html = buildHtmlPage(
+    recentData, totalPeriods, topN, topDetails,
+    coldNumbers, onceNumbers, dateRange, SOURCE_URL, PASSWORD, comboRank, zodiacTrios
+  );
+  const setCookieHeader = `login_password=${PASSWORD}; Max-Age=86400; path=/; SameSite=Lax`;
+  return new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Set-Cookie': setCookieHeader,
+      ...CORS_HEADERS,
+    },
+  });
+}
+
+async function routeJson(request, url) {
+  const limit = parseInt(url.searchParams.get('limit')) || DEFAULT_LIMIT;
+  const topN = parseInt(url.searchParams.get('top')) || DEFAULT_TOP;
+  const simple = url.searchParams.get('simple') === 'true';
+  const debug = url.searchParams.get('debug') === 'true';
+  const { recentData, totalPeriods, topDetails, coldNumbers, onceNumbers, dateRange, fullStats, comboRank, zodiacTrios } =
+    await fetchAndAnalyze(SOURCE_URL, limit, topN, debug);
+  return buildJsonResponse(
+    recentData, totalPeriods, topN, topDetails,
+    coldNumbers, onceNumbers, dateRange, fullStats, simple, comboRank, zodiacTrios, CORS_HEADERS
+  );
+}
+
+async function fetchAndAnalyze(sourceUrl, limit, topN, debug) {
+  const randomParam = '_=' + Date.now();
+  const fetchUrl = sourceUrl + (sourceUrl.includes('?') ? '&' : '?') + randomParam;
+  const resp = await fetch(fetchUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    },
+  });
+  const html = await resp.text();
+
+  const dateRegex = /六合彩开奖记录\s+(\d{4}年\d{1,2}月\d{1,2}日)/g;
+  const dates = [];
+  let d;
+  while ((d = dateRegex.exec(html)) !== null) dates.push(d[1]);
+
+  const issueRegex = /第\s*(?:<[^>]+>)?\s*(\d+)\s*(?:<\/[^>]+>)?\s*期/g;
+  const issues = [];
+  let i;
+  while ((i = issueRegex.exec(html)) !== null) issues.push(i[1]);
+
+  const numRegex = /<dt[^>]*ball[^>]*>[\s\S]*?(\d{1,2})[\s\S]*?<\/dt>/g;
+  const allNumbers = [];
+  let n;
+  while ((n = numRegex.exec(html)) !== null) allNumbers.push(n[1]);
+
+  const maxPeriods = Math.min(limit, dates.length, issues.length, Math.floor(allNumbers.length / 7));
+  if (maxPeriods === 0) {
+    const error = new Error('未能解析到开奖数据，请检查页面结构是否发生变化。');
+    if (debug) {
+      error.htmlSnippet = html.substring(0, 1000) + '\n...\n' + html.substring(html.length - 500);
+    }
+    throw error;
+  }
+
+  const recentData = [];
+  for (let p = 0; p < maxPeriods; p++) {
+    const start = p * 7;
+    recentData.push({
+      issue: issues[p] || String(p + 1),
+      date: dates[p] || '未知日期',
+      numbers: allNumbers.slice(start, start + 7),
+    });
+  }
+
+  // 单号频率
+  const freq = {};
+  for (let num = 1; num <= 49; num++) freq[String(num).padStart(2, '0')] = 0;
+  recentData.forEach(period => {
+    period.numbers.forEach(num => { freq[num] = (freq[num] || 0) + 1; });
+  });
+  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const fullStats = sorted.map(([num, count]) => ({
+    number: num,
+    count,
+    zodiac: ZODIAC_MAP[num],
+    color: COLOR_MAP[num]
+  }));
+  const topDetails = sorted.slice(0, topN).map(([num, count]) => ({
+    number: num,
+    count,
+    zodiac: ZODIAC_MAP[num],
+    color: COLOR_MAP[num]
+  }));
+  const coldNumbers = sorted.filter(item => item[1] === 0).map(item => ({
+    number: item[0],
+    zodiac: ZODIAC_MAP[item[0]],
+    color: COLOR_MAP[item[0]]
+  }));
+  // 新增：出现一次
+  const onceNumbers = sorted.filter(item => item[1] === 1).map(item => ({
+    number: item[0],
+    zodiac: ZODIAC_MAP[item[0]],
+    color: COLOR_MAP[item[0]]
+  }));
+
+  // 号码3中3（平码）
+  const comboCount = {};
+  recentData.forEach(period => {
+    const normal = period.numbers.slice(0, 6);
+    for (let a = 0; a < 4; a++) {
+      for (let b = a+1; b < 5; b++) {
+        for (let c = b+1; c < 6; c++) {
+          const trio = [normal[a], normal[b], normal[c]].sort();
+          const key = trio.join(',');
+          comboCount[key] = (comboCount[key] || 0) + 1;
+        }
+      }
+    }
+  });
+  const comboArray = Object.entries(comboCount).map(([key, count]) => ({
+    combo: key.split(','),
+    count: count
+  }));
+  comboArray.sort((a, b) => b.count - a.count || a.combo.join().localeCompare(b.combo.join()));
+  const comboRank = comboArray.slice(0, 4);
+
+  // 三连肖（全部7码生肖）
+  const zodiacTrioCount = {};
+  const allTrios = [];
+  for (let i = 0; i < 10; i++) {
+    for (let j = i+1; j < 11; j++) {
+      for (let k = j+1; k < 12; k++) {
+        allTrios.push([ZODIACS[i], ZODIACS[j], ZODIACS[k]]);
+      }
+    }
+  }
+  recentData.forEach(period => {
+    const zodiacSet = new Set();
+    period.numbers.forEach(num => { zodiacSet.add(ZODIAC_MAP[num]); });
+    allTrios.forEach(trio => {
+      if (trio.every(z => zodiacSet.has(z))) {
+        const key = trio.join(',');
+        zodiacTrioCount[key] = (zodiacTrioCount[key] || 0) + 1;
+      }
+    });
+  });
+  const zodiacTrioArray = Object.entries(zodiacTrioCount).map(([key, count]) => ({
+    trio: key.split(','),
+    count: count
+  }));
+  zodiacTrioArray.sort((a, b) => b.count - a.count || a.trio.join().localeCompare(b.trio.join()));
+  const zodiacTrios = zodiacTrioArray.slice(0, 4);
+
+  const dateRange = {
+    from: recentData[recentData.length - 1]?.date || 'N/A',
+    to: recentData[0]?.date || 'N/A',
+  };
+  return { recentData, totalPeriods: maxPeriods, topDetails, coldNumbers, onceNumbers, dateRange, fullStats, comboRank, zodiacTrios };
+}
+
+function buildJsonResponse(recentData, totalPeriods, topN, topDetails, coldNumbers, onceNumbers, dateRange, fullStats, simple, comboRank, zodiacTrios, corsHeaders) {
+  const result = {
+    success: true,
+    generatedAt: new Date().toISOString(),
+    basedOnPeriods: totalPeriods,
+    dateRange: { from: dateRange.from, to: dateRange.to },
+    topCount: topN,
+    topNumbers: topDetails.map(item => item.number),
+    topDetails: topDetails,
+    coldNumbers: coldNumbers,
+    onceNumbers: onceNumbers,   // 新增
+    hotTrios: comboRank.map(item => ({ combo: item.combo, occurrences: item.count })),
+    zodiacTrios: zodiacTrios.map(item => ({ zodiacs: item.trio, occurrences: item.count }))
+  };
+  const explanation = {
+    success: '请求是否成功（布尔值）',
+    generatedAt: '数据生成时间（ISO 8601 格式，UTC时区）',
+    basedOnPeriods: '本次统计所依据的开奖期数',
+    dateRange: '统计范围的最早/最晚一期日期',
+    topCount: '您请求的优选号码个数（默认为24）',
+    topNumbers: '优选号码列表（仅号码，数组）',
+    topDetails: '优选号码详情（包含号码、出现次数、生肖、波色）',
+    coldNumbers: '在统计期内从未出现的号码（含生肖、波色）',
+    onceNumbers: '在统计期内恰好出现1次的号码（含生肖、波色）',
+    hotTrios: '基于平码统计的出现频率最高的4组“3中3”号码组合',
+    zodiacTrios: '基于平码+特码全部7个号码的生肖，出现频率最高的4组“三连肖”组合'
+  };
+  if (!simple) {
+    result.fullStats = fullStats;
+    explanation.fullStats = '全部49个号码按出现次数降序排列的完整统计（含生肖、波色）';
+  }
+  const finalResult = { _explanation: explanation, ...result };
+  return new Response(JSON.stringify(finalResult, null, 2), {
+    headers: { 'Content-Type': 'application/json; charset=utf-8', ...corsHeaders },
+  });
+}
+
+function buildHtmlPage(recentData, totalPeriods, topN, topDetails, coldNumbers, onceNumbers, dateRange, sourceUrl, password, comboRank, zodiacTrios) {
+  const displayDetails = [...topDetails].sort((a, b) => parseInt(a.number) - parseInt(b.number));
+  const numberListStr = displayDetails.map(item => item.number).join(', ');
+  const updateTime = new Date().toLocaleString('zh-CN');
+
+  // 优选卡片
+  let cardsHtml = '';
+  displayDetails.forEach(item => {
+    const num = item.number, count = item.count, zodiac = item.zodiac, color = item.color;
+    const cls = COLOR_CLASS[color];
+    cardsHtml += `
+      <div class="card color-${cls}">
+        <div class="number" style="color:${COLOR_BG[color]};">${num}</div>
+        <div class="zodiac" style="color:#5e6f82;">${zodiac}</div>
+        <div class="count">出现 ${count} 次</div>
+        <div class="color-tag" style="background:${COLOR_BG[color]};color:#fff;border-radius:10px;padding:0.1rem 0.5rem;font-size:0.7rem;display:inline-block;margin-top:0.2rem;">${color}</div>
+      </div>
+    `;
+  });
+
+  // 冷号
+  let coldCardsHtml = '';
+  if (coldNumbers.length === 0) {
+    coldCardsHtml = '<span style="color:#7f8c8d;">暂无冷号（所有号码均有出现）</span>';
+  } else {
+    coldNumbers.forEach(item => {
+      const num = item.number, zodiac = item.zodiac, color = item.color;
+      const cls = COLOR_CLASS[color];
+      coldCardsHtml += `
+        <div class="cold-card color-${cls}" style="border-left:3px solid ${COLOR_BG[color]};">
+          <span class="cold-num">${num}</span>
+          <span class="cold-zodiac" style="color:#5e6f82;font-size:0.75rem;">${zodiac}</span>
+          <span class="cold-label" style="background:${COLOR_BG[color]};color:#fff;border-radius:10px;padding:0 0.4rem;font-size:0.6rem;">${color}</span>
+          <span class="cold-label">未出现</span>
+        </div>
+      `;
+    });
+  }
+
+  // 出现一次
+  let onceCardsHtml = '';
+  if (onceNumbers.length === 0) {
+    onceCardsHtml = '<span style="color:#7f8c8d;">没有恰好出现1次的号码。</span>';
+  } else {
+    onceNumbers.forEach(item => {
+      const num = item.number, zodiac = item.zodiac, color = item.color;
+      const cls = COLOR_CLASS[color];
+      onceCardsHtml += `
+        <div class="cold-card color-${cls}" style="border-left:3px solid ${COLOR_BG[color]};">
+          <span class="cold-num">${num}</span>
+          <span class="cold-zodiac" style="color:#5e6f82;font-size:0.75rem;">${zodiac}</span>
+          <span class="cold-label" style="background:${COLOR_BG[color]};color:#fff;border-radius:10px;padding:0 0.4rem;font-size:0.6rem;">${color}</span>
+          <span class="cold-label">出现1次</span>
+        </div>
+      `;
+    });
+  }
+
+  // 号码3中3
+  let comboHtml = '';
+  if (comboRank.length === 0) {
+    comboHtml = '<p style="color:#7f8c8d;">数据不足，无法统计组合。</p>';
+  } else {
+    comboHtml = '<div class="combo-grid">';
+    comboRank.forEach((item, idx) => {
+      const combo = item.combo;
+      const count = item.count;
+      const numsWithZodiac = combo.map(n => {
+        const zodiac = ZODIAC_MAP[n];
+        const color = COLOR_MAP[n];
+        const bg = COLOR_BG[color];
+        return `<span class="combo-ball" style="background:${bg};color:#fff;border-radius:8px;padding:0.1rem 0.3rem;min-width:30px;display:inline-flex;flex-direction:column;align-items:center;"><span class="combo-num">${n}</span><span class="combo-zodiac" style="font-size:0.5rem;opacity:0.8;">${zodiac}</span></span>`;
+      }).join(' ');
+      comboHtml += `
+        <div class="combo-card">
+          <div class="combo-rank">#${idx+1}</div>
+          <div class="combo-numbers">${numsWithZodiac}</div>
+          <div class="combo-count">出现 ${count} 次</div>
+        </div>
+      `;
+    });
+    comboHtml += '</div>';
+  }
+
+  // 三连肖
+  let zodiacTrioHtml = '';
+  if (zodiacTrios.length === 0) {
+    zodiacTrioHtml = '<p style="color:#7f8c8d;">数据不足，无法统计三连肖。</p>';
+  } else {
+    zodiacTrioHtml = '<div class="combo-grid">';
+    zodiacTrios.forEach((item, idx) => {
+      const trio = item.trio;
+      const count = item.count;
+      const zodiacLabels = trio.map(z => `<span class="zodiac-tag" style="background:#9b59b6;color:#fff;border-radius:20px;padding:0.1rem 0.6rem;font-size:0.9rem;">${z}</span>`).join(' ');
+      zodiacTrioHtml += `
+        <div class="combo-card zodiac-trio-card">
+          <div class="combo-rank">#${idx+1}</div>
+          <div class="combo-numbers">${zodiacLabels}</div>
+          <div class="combo-count">出现 ${count} 期</div>
+        </div>
+      `;
+    });
+    zodiacTrioHtml += '</div>';
+  }
+
+  // ===== 开奖记录 =====
+  let recordsHtml = '';
+  recentData.forEach(period => {
+    const nums = period.numbers;
+    const normalNums = nums.slice(0, 6);
+    const specialNum = nums[6];
+
+    const normalHtml = normalNums.map(n => {
+      const zodiac = ZODIAC_MAP[n];
+      const color = COLOR_MAP[n];
+      const bg = COLOR_BG[color];
+      return `<span class="ball" style="background:${bg};color:#fff;border-radius:8px;padding:0.1rem 0.2rem;min-width:32px;display:inline-flex;flex-direction:column;align-items:center;"><span class="ball-num">${n}</span><span class="ball-zodiac" style="font-size:0.55rem;opacity:0.8;">${zodiac}</span></span>`;
+    }).join(' ');
+
+    const specialHtml = specialNum ? (() => {
+      const color = COLOR_MAP[specialNum];
+      const bg = COLOR_BG[color];
+      return `<span class="ball tm" style="background:${bg};border:2px solid ${bg};box-shadow:0 0 10px ${bg}88, inset 0 0 4px #fff;color:#fff;border-radius:8px;padding:0.1rem 0.2rem;min-width:32px;display:inline-flex;flex-direction:column;align-items:center;position:relative;"><span class="ball-num">${specialNum}</span><span class="ball-zodiac" style="font-size:0.55rem;opacity:0.8;">${ZODIAC_MAP[specialNum]}</span><span style="position:absolute;top:-10px;right:-10px;background:#e74c3c;color:#fff;border-radius:50%;font-size:0.6rem;padding:0.1rem 0.3rem;line-height:1;font-weight:bold;border:1px solid #fff;">特</span></span>`;
+    })() : '';
+
+    const separator = `<span class="separator" style="display:inline-block;font-size:1.2rem;font-weight:700;color:#2c3e50;margin:0 0.3rem;vertical-align:middle;">＋</span>`;
+
+    recordsHtml += `
+      <tr>
+        <td>${period.issue}</td>
+        <td>${period.date}</td>
+        <td>${normalHtml} ${separator} ${specialHtml}</td>
+      </tr>
+    `;
+  });
+
+  // 图表
+  const top6 = topDetails.slice(0, 6).map(item => item.number);
+  const chartLabels = recentData.map(p => p.date.replace(/年|月/g, '/').replace('日', ''));
+  const chartDatasets = top6.map(num => {
+    const data = recentData.map(p => p.numbers.includes(num) ? 1 : 0);
+    return {
+      label: num,
+      data: data,
+      borderWidth: 2,
+      tension: 0.1,
+      pointRadius: 3,
+    };
+  });
+  const colors = ['#e74c3c', '#f39c12', '#2ecc71', '#3498db', '#9b59b6', '#1abc9c'];
+  chartDatasets.forEach((ds, idx) => {
+    ds.borderColor = colors[idx % colors.length];
+    ds.backgroundColor = colors[idx % colors.length] + '33';
+  });
+
+  const iframeHtml = `
+    <div class="iframe-section">
+      <h3>📺 搅珠直播</h3>
+      <iframe id="live-iframe" width="100%" height="400" src="https://jdb0066.www21967aa.com/921.html" frameborder="0" scrolling="no" allowfullscreen></iframe>
+      <p class="iframe-tip">⏰ 直播时间：每晚 21:30（北京时间）</p>
+    </div>
+  `;
+
+  return `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <title>每日优选号码（波色归类版）</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+      background: linear-gradient(145deg, #f5f7fa 0%, #e9edf5 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+    .container { max-width: 1200px; width: 100%; }
+    header { text-align: center; margin-bottom: 1.5rem; }
+    header h1 { font-size: 2.4rem; font-weight: 700; color: #1a2639; letter-spacing: 2px; }
+    header .sub { color: #4a5b6e; font-size: 1rem; margin-top: 0.2rem; }
+    .info-box {
+      background: #fff;
+      border-radius: 16px;
+      padding: 1.2rem 1.8rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      margin-bottom: 1.5rem;
+      border-left: 5px solid #2c3e50;
+    }
+    .info-box p { color: #2c3e50; font-size: 0.95rem; line-height: 1.6; margin: 0.2rem 0; }
+    .info-box .highlight { font-weight: 600; color: #1a2639; }
+    .info-box .legend { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.5rem; }
+    .legend-item { display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; }
+    .legend-color { width: 20px; height: 20px; border-radius: 4px; }
+    .legend-color.red { background: #e74c3c; }
+    .legend-color.blue { background: #3498db; }
+    .legend-color.green { background: #2ecc71; }
+
+    .stats {
+      background: white;
+      border-radius: 20px;
+      padding: 1rem 2rem;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.2rem;
+    }
+    .stats-item { font-size: 0.9rem; color: #2c3e50; }
+    .stats-item strong { font-weight: 600; color: #1a2639; }
+    .refresh-btn, .share-btn, .export-btn, .logout-btn {
+      color: white;
+      border: none;
+      padding: 0.3rem 1rem;
+      border-radius: 30px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-left: 0.5rem;
+    }
+    .refresh-btn { background: #2ecc71; }
+    .refresh-btn:hover { background: #27ae60; }
+    .share-btn { background: #3498db; }
+    .share-btn:hover { background: #2980b9; }
+    .export-btn { background: #e67e22; }
+    .export-btn:hover { background: #d35400; }
+    .logout-btn { background: #e74c3c; }
+    .logout-btn:hover { background: #c0392b; }
+
+    .copy-area {
+      background: white;
+      border-radius: 16px;
+      padding: 0.8rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      border: 1px solid #e2e8f0;
+    }
+    .copy-area .label { font-weight: 500; color: #2c3e50; margin-right: 0.5rem; }
+    .copy-area .number-list {
+      flex: 1;
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: #1a2639;
+      word-break: break-all;
+      min-width: 200px;
+      padding: 0.3rem 0;
+      letter-spacing: 0.5px;
+    }
+    .copy-btn {
+      background: #2c3e50;
+      color: white;
+      border: none;
+      padding: 0.5rem 1.2rem;
+      border-radius: 30px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .copy-btn:hover { background: #1a2639; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 1rem 0.5rem;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      transition: transform 0.2s, box-shadow 0.2s;
+      border-top: 4px solid #d0d7e2;
+    }
+    .card:hover { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(0,0,0,0.08); }
+    .card .number { font-size: 2rem; font-weight: 700; line-height: 1.2; }
+    .card .count { font-size: 0.75rem; color: #5e6f82; margin-top: 0.3rem; }
+    .card .zodiac { font-size: 0.85rem; color: #5e6f82; margin-top: 0.1rem; }
+    .card .color-tag { margin-top: 0.2rem; }
+    .card.color-red { border-top-color: #e74c3c; }
+    .card.color-blue { border-top-color: #3498db; }
+    .card.color-green { border-top-color: #2ecc71; }
+
+    .cold-section {
+      background: white;
+      border-radius: 16px;
+      padding: 1.2rem 1.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      margin: 1.5rem 0;
+    }
+    .cold-section h3 { color: #1a2639; margin-bottom: 0.8rem; font-size: 1.2rem; }
+    .cold-grid { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+    .cold-card {
+      background: #ecf0f1;
+      border-radius: 30px;
+      padding: 0.3rem 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.9rem;
+    }
+    .cold-num { font-weight: 700; color: #2c3e50; }
+    .cold-zodiac { color: #5e6f82; font-size: 0.75rem; }
+    .cold-label { color: #7f8c8d; font-size: 0.7rem; }
+
+    .combo-section {
+      background: white;
+      border-radius: 16px;
+      padding: 1.2rem 1.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      margin: 1.5rem 0;
+    }
+    .combo-section h3 { color: #1a2639; margin-bottom: 0.8rem; font-size: 1.2rem; }
+    .combo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+    }
+    .combo-card {
+      background: #f8fafc;
+      border-radius: 12px;
+      padding: 0.8rem;
+      border-left: 4px solid #e74c3c;
+      text-align: center;
+    }
+    .combo-rank { font-size: 0.8rem; font-weight: 600; color: #7f8c8d; margin-bottom: 0.3rem; }
+    .combo-numbers { display: flex; justify-content: center; gap: 0.3rem; flex-wrap: wrap; margin: 0.3rem 0; }
+    .combo-ball { display: inline-flex; flex-direction: column; align-items: center; border-radius: 8px; padding: 0.1rem 0.3rem; min-width: 30px; }
+    .combo-num { font-weight: 700; font-size: 1.1rem; color: #fff; }
+    .combo-zodiac { font-size: 0.5rem; color: rgba(255,255,255,0.8); }
+    .combo-count { font-size: 0.8rem; color: #5e6f82; margin-top: 0.2rem; }
+
+    .zodiac-trio-card { border-left-color: #9b59b6; }
+    .zodiac-tag { display: inline-block; background: #9b59b6; color: white; padding: 0.1rem 0.6rem; border-radius: 20px; font-size: 0.9rem; font-weight: 500; margin: 0.1rem; }
+
+    .records-section {
+      background: white;
+      border-radius: 16px;
+      padding: 1.2rem 1.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      margin: 1.5rem 0;
+    }
+    .records-section h3 { color: #1a2639; margin-bottom: 0.8rem; font-size: 1.2rem; }
+    .records-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .records-table th { background: #2c3e50; color: white; padding: 0.5rem 0.8rem; text-align: left; }
+    .records-table td { padding: 0.5rem 0.8rem; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+    .records-table tr:nth-child(even) { background: #f8fafc; }
+    .ball { display: inline-flex; flex-direction: column; align-items: center; border-radius: 8px; padding: 0.1rem 0.2rem; min-width: 32px; margin: 0.1rem 0.2rem; }
+    .ball .ball-num { font-size: 0.95rem; color: #fff; }
+    .ball .ball-zodiac { font-size: 0.55rem; opacity: 0.8; color: #fff; }
+    .ball.tm { position: relative; border: 2px solid #fff; box-shadow: 0 0 10px rgba(0,0,0,0.3); }
+    .separator { display: inline-block; font-size: 1.2rem; font-weight: 700; color: #2c3e50; margin: 0 0.3rem; vertical-align: middle; }
+
+    .chart-section {
+      background: white;
+      border-radius: 16px;
+      padding: 1.2rem 1.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      margin: 1.5rem 0;
+    }
+    .chart-section h3 { color: #1a2639; margin-bottom: 0.8rem; font-size: 1.2rem; }
+    .chart-container { position: relative; height: 280px; max-height: 300px; width: 100%; }
+    .chart-container canvas { width: 100% !important; height: 100% !important; }
+
+    .iframe-section {
+      margin: 1.5rem 0;
+      background: white;
+      border-radius: 16px;
+      padding: 1rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+    }
+    .iframe-section h3 { color: #1a2639; margin-bottom: 0.8rem; font-size: 1.2rem; }
+    .iframe-section iframe { border-radius: 8px; min-height: 300px; width: 100%; }
+    .iframe-tip { color: #7f8c8d; font-size: 0.8rem; margin-top: 0.5rem; text-align: center; }
+
+    .footer { margin-top: 2.5rem; text-align: center; color: #7b8a9e; font-size: 0.85rem; }
+    .footer a { color: #2c3e50; text-decoration: none; border-bottom: 1px dashed #b0c0d0; }
+
+    @media (max-width: 600px) {
+      .grid { grid-template-columns: repeat(4, 1fr); }
+      .combo-grid { grid-template-columns: 1fr 1fr; }
+      header h1 { font-size: 1.6rem; }
+      .stats { flex-direction: column; align-items: flex-start; gap: 0.3rem; }
+      .copy-area { flex-direction: column; align-items: stretch; }
+      .copy-btn { align-self: flex-end; }
+      .info-box { padding: 0.8rem 1rem; }
+      .chart-container { height: 200px; }
+      .iframe-section iframe { height: 250px; }
+      .records-table { font-size: 0.75rem; }
+      .records-table td, .records-table th { padding: 0.3rem 0.4rem; }
+      .ball { min-width: 24px; padding: 0.05rem 0.1rem; }
+      .ball .ball-num { font-size: 0.8rem; }
+      .ball .ball-zodiac { font-size: 0.45rem; }
+      .separator { font-size: 1rem; margin: 0 0.1rem; }
+      .combo-ball { min-width: 24px; }
+      .combo-num { font-size: 0.9rem; }
+      .zodiac-tag { font-size: 0.75rem; padding: 0.05rem 0.4rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="captureArea">
+    <header>
+      <h1>✨ 每日优选号码</h1>
+      <div class="sub">基于最近 ${totalPeriods} 期开奖数据，含生肖、波色、号码3中3、三连肖推荐</div>
+    </header>
+
+    <div class="info-box">
+      <p><span class="highlight">📊 统计规则：</span>统计最近 <strong>${totalPeriods}</strong> 期开奖数据中每个号码（01~49）的出现次数，按次数从高到低排序，取前 <strong>${topN}</strong> 个作为"优选号码"。页面展示时再按号码从小到大排列。</p>
+      <p><span class="highlight">🎨 波色图例：</span></p>
+      <div class="legend">
+        <span class="legend-item"><span class="legend-color red"></span> 红波</span>
+        <span class="legend-item"><span class="legend-color blue"></span> 蓝波</span>
+        <span class="legend-item"><span class="legend-color green"></span> 绿波</span>
+      </div>
+      <p style="margin-top:0.3rem; font-size:0.9rem; color:#5e6f82;">💡 数据实时抓取自 <a href="${sourceUrl}" target="_blank" style="color:#2c3e50;">六合彩开奖记录</a>，每次刷新均重新统计。</p>
+    </div>
+  ${iframeHtml}
+    <div class="stats">
+      <span class="stats-item"><strong>📅 数据范围</strong> ${dateRange.from} ～ ${dateRange.to}</span>
+      <span class="stats-item"><strong>🎯 优选个数</strong> ${topN} 个</span>
+      <span class="stats-item"><strong>🕒 更新</strong> ${updateTime}</span>
+      <span class="stats-item">
+        <button class="refresh-btn" onclick="refreshData()">🔄 刷新</button>
+        <button class="share-btn" onclick="shareLink()">🔗 分享</button>
+        <button class="export-btn" onclick="exportImage()">📸 导出图片</button>
+        <button class="logout-btn" onclick="logout()">退出</button>
+      </span>
+    </div>
+
+    <div class="copy-area">
+      <span class="label">📋 复制号码：</span>
+      <span class="number-list" id="numberList">${numberListStr}</span>
+      <button class="copy-btn" onclick="copyNumbers()">📋 复制</button>
+    </div>
+
+    <div class="grid">${cardsHtml}</div>
+
+    <div class="cold-section">
+      <h3>❄️ 冷号推荐（最近 ${totalPeriods} 期未出现）</h3>
+      <div class="cold-grid">${coldCardsHtml}</div>
+    </div>
+
+    <div class="cold-section">
+      <h3>🔢 恰好出现1次的号码</h3>
+      <div class="cold-grid">${onceCardsHtml}</div>
+    </div>
+
+    <div class="combo-section">
+      <h3>🔥 热门“3中3”组合推荐（基于平码，出现频率最高的4组）</h3>
+      ${comboHtml}
+      <p style="margin-top:0.6rem; font-size:0.85rem; color:#7f8c8d;">📌 统计方法：统计最近 ${totalPeriods} 期每期6个平码中所有C(6,3)=20种3码组合，按出现次数降序排列。</p>
+    </div>
+
+    <div class="combo-section">
+      <h3>🌈 热门“三连肖”组合推荐（基于平码+特码全部7个号码的生肖，出现频率最高的4组）</h3>
+      ${zodiacTrioHtml}
+      <p style="margin-top:0.6rem; font-size:0.85rem; color:#7f8c8d;">📌 统计方法：统计最近 ${totalPeriods} 期每期7个号码对应的生肖集合，找出所有同时出现的三只生肖组合（C(12,3)=220种），按出现期数降序排列。</p>
+    </div>
+
+    <div class="records-section">
+      <h3>📋 最近 ${totalPeriods} 期开奖记录（平码 ＋ 特码）</h3>
+      <div style="overflow-x:auto;">
+        <table class="records-table">
+          <thead><tr><th>期数</th><th>日期</th><th>号码（平码 ＋ 特码）</th></tr></thead>
+          <tbody>${recordsHtml}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="chart-section">
+      <h3>📈 热号走势（前6个优选号码在最近 ${totalPeriods} 期的出现情况）</h3>
+      <div class="chart-container"><canvas id="trendChart"></canvas></div>
+    </div>
+
+    <div class="footer">
+      <a href="?limit=40">📄 查看几期</a>
+      <a href="?format=json">📄 查看JSON数据</a> ｜ 仅统计最近 ${totalPeriods} 期
+    </div>
+  </div>
+
+  <script>
+    const chartLabels = ${JSON.stringify(chartLabels)};
+    const chartDatasets = ${JSON.stringify(chartDatasets)};
+
+    new Chart(document.getElementById('trendChart').getContext('2d'), {
+      type: 'line',
+      data: { labels: chartLabels, datasets: chartDatasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top' },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return context.dataset.label + ': ' + (context.parsed.y === 1 ? '出现' : '未出现');
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            min: 0,
+            max: 1,
+            ticks: { stepSize: 1, callback: function(value) { return value === 1 ? '出现' : '未出现'; } }
+          }
+        }
+      }
+    });
+
+    function copyNumbers() {
+      const text = document.getElementById('numberList').innerText;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => alert('✅ 已复制 ' + text + ' 到剪贴板！'))
+          .catch(() => fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+      }
+    }
+    function fallbackCopy(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        alert('✅ 已复制 ' + text + ' 到剪贴板！');
+      } catch (e) {
+        alert('❌ 复制失败，请手动复制。');
+      }
+      document.body.removeChild(textarea);
+    }
+
+    function refreshData() {
+      window.location.href = window.location.pathname + '?t=' + Date.now();
+    }
+
+    function logout() {
+      document.cookie = 'login_password=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+      window.location.href = window.location.pathname + '?t=' + Date.now();
+    }
+
+    function shareLink() {
+      const url = window.location.href;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+          alert('✅ 链接已复制，可分享给好友（含登录密码，请妥善保管）。');
+        }).catch(() => fallbackCopy(url));
+      } else {
+        fallbackCopy(url);
+      }
+    }
+
+    function exportImage() {
+      const element = document.getElementById('captureArea');
+      html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#f5f7fa',
+        allowTaint: true,
+      }).then(canvas => {
+        const link = document.createElement('a');
+        link.download = '优选号码_' + new Date().toISOString().slice(0,10) + '.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      }).catch(err => {
+        alert('导出图片失败：' + err.message);
+      });
+    }
+  </script>
+</body>
+</html>
+  `;
+}
+
+function loginPageHtml(password) {
+  return `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>请输入密码</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+      background: linear-gradient(145deg, #f5f7fa 0%, #e9edf5 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .login-box {
+      background: white;
+      padding: 2.5rem 2rem;
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.08);
+      text-align: center;
+      width: 100%;
+      max-width: 400px;
+    }
+    .login-box h1 { font-size: 1.8rem; color: #1a2639; margin-bottom: 0.5rem; }
+    .login-box p { color: #4a5b6e; margin-bottom: 1.5rem; font-size: 0.95rem; }
+    .login-box input {
+      width: 100%;
+      padding: 0.8rem 1rem;
+      border: 1px solid #d0d7e2;
+      border-radius: 30px;
+      font-size: 1rem;
+      outline: none;
+      margin-bottom: 1rem;
+    }
+    .login-box input:focus { border-color: #2c3e50; }
+    .login-box button {
+      width: 100%;
+      padding: 0.8rem;
+      background: #2c3e50;
+      color: white;
+      border: none;
+      border-radius: 30px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .login-box button:hover { background: #1a2639; }
+    .login-box .error { color: #e74c3c; font-size: 0.9rem; margin-top: 0.5rem; display: none; }
+    .login-box .hint { margin-top: 1rem; color: #8896a8; font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <h1>🔐 验证身份</h1>
+    <p>请输入访问密码查看优选号码</p>
+    <form id="loginForm">
+      <input type="password" id="pwdInput" placeholder="请输入密码" autofocus>
+      <button type="submit">确认登录</button>
+      <div class="error" id="errorMsg">密码错误，请重试。</div>
+      <div class="hint">默认密码：111111</div>
+    </form>
+  </div>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = document.getElementById('pwdInput');
+      const error = document.getElementById('errorMsg');
+      const pwd = input.value.trim();
+
+      error.style.display = 'none';
+
+      try {
+        const resp = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd }),
+        });
+        const result = await resp.json();
+        if (result.success) {
+          window.location.href = '/';
+        } else {
+          error.textContent = result.message || '密码错误，请重试。';
+          error.style.display = 'block';
+          input.value = '';
+          input.focus();
+        }
+      } catch (err) {
+        error.textContent = '网络错误，请稍后重试。';
+        error.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
+  `;
+}
